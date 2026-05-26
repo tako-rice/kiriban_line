@@ -1,0 +1,104 @@
+//@version=6
+strategy(
+     "KiriBan Reversal Strategy",
+     overlay = true,
+     initial_capital = 100000,
+     pyramiding = 0,
+     default_qty_type = strategy.percent_of_equity,
+     default_qty_value = 10
+)
+
+// =====================================================
+// 設定
+// =====================================================
+stepSize = input.float(1.0, "キリ番間隔", step = 0.1)
+
+tpValue  = input.float(0.5, "利確幅")
+slValue  = input.float(0.5, "損切幅")
+
+showLines = input.bool(true, "キリ番ライン表示")
+
+// =====================================================
+// キリ番価格計算
+// =====================================================
+float currentLevel = math.round(close / stepSize) * stepSize
+
+float upperLevel = currentLevel
+float lowerLevel = currentLevel
+
+// =====================================================
+// キリ番ライン表示
+// =====================================================
+if showLines
+
+    line.new(
+         x1 = bar_index,
+         y1 = currentLevel,
+         x2 = bar_index + 20,
+         y2 = currentLevel,
+         color = color.gray,
+         width = 1,
+         style = line.style_solid
+     )
+
+// =====================================================
+// ロング条件
+// 上から下へ当たる
+// =====================================================
+bool longCondition =
+     low <= currentLevel and
+     open > currentLevel and
+     close > currentLevel
+
+// =====================================================
+// ショート条件
+// 下から上へ当たる
+// =====================================================
+bool shortCondition =
+     high >= currentLevel and
+     open < currentLevel and
+     close < currentLevel
+
+// =====================================================
+// ロングエントリー
+// =====================================================
+if longCondition and strategy.position_size == 0
+
+    strategy.entry(
+         id = "Long",
+         direction = strategy.long
+     )
+
+// =====================================================
+// ショートエントリー
+// =====================================================
+if shortCondition and strategy.position_size == 0
+
+    strategy.entry(
+         id = "Short",
+         direction = strategy.short
+     )
+
+// =====================================================
+// ロング決済
+// =====================================================
+if strategy.position_size > 0
+
+    strategy.exit(
+         "Long Exit",
+         from_entry = "Long",
+         limit = strategy.position_avg_price + tpValue,
+         stop  = strategy.position_avg_price - slValue
+     )
+
+// =====================================================
+// ショート決済
+// =====================================================
+if strategy.position_size < 0
+
+    strategy.exit(
+         "Short Exit",
+         from_entry = "Short",
+         limit = strategy.position_avg_price - tpValue,
+         stop  = strategy.position_avg_price + slValue
+     )
