@@ -1,122 +1,100 @@
 //@version=6
 strategy(
-     "KiriBan REAL FIX",
+     "KiriBan Limit Touch Strategy",
      overlay = true,
      pyramiding = 0,
-     initial_capital = 100000
+     initial_capital = 100000,
+     calc_on_every_tick = true,
+     process_orders_on_close = false
 )
 
 // ========================================
 // 設定
 // ========================================
 stepSize = input.float(1.0, "キリ番間隔")
-tpPips   = input.int(30, "利確pips")
-slPips   = input.int(30, "損切pips")
+tpPips   = input.int(30, "利確 pips")
+slPips   = input.int(30, "損切 pips")
 
-// USDJPY想定
-pipValue = 0.01
+showLines = input.bool(true, "キリ番表示")
 
-tp = tpPips * pipValue
-sl = slPips * pipValue
+pipValue = input.float(0.01, "1 pip の価格幅", step = 0.001)
 
-// ========================================
-// キリ番計算
-// ========================================
-float level = math.round(close / stepSize) * stepSize
+tpValue = tpPips * pipValue
+slValue = slPips * pipValue
 
-// ========================================
-// ライン表示
-// ========================================
-line.new(
-     bar_index,
-     level,
-     bar_index + 20,
-     level,
-     color = color.red,
-     width = 1
-)
+float upperLevel = math.ceil(close / stepSize) * stepSize
+float lowerLevel = math.floor(close / stepSize) * stepSize
 
-// ========================================
-// 一度使ったライン管理
-// ========================================
+if upperLevel == lowerLevel
+    upperLevel := upperLevel + stepSize
+    lowerLevel := lowerLevel - stepSize
+
 var float usedLevel = na
 
-// ========================================
-// ライン解放条件
-// ========================================
 if not na(usedLevel)
-
-    if close >= usedLevel + stepSize or close <= usedLevel - stepSize
+    if high >= usedLevel + stepSize or low <= usedLevel - stepSize
         usedLevel := na
 
-// ========================================
-// ロング条件
-// 上から下へタッチ
-// ========================================
-longSignal =
-     low <= level and
-     open > level and
-     close > level
+bool canLong  = na(usedLevel) or usedLevel != lowerLevel
+bool canShort = na(usedLevel) or usedLevel != upperLevel
 
-// ========================================
-// ショート条件
-// 下から上へタッチ
-// ========================================
-shortSignal =
-     high >= level and
-     open < level and
-     close < level
+strategy.cancel("Long")
+strategy.cancel("Short")
 
-// ========================================
-// ロング
-// ========================================
-if longSignal and strategy.position_size == 0
-
-    if na(usedLevel) or usedLevel != level
-
+if strategy.position_size == 0
+    if canLong
         strategy.entry(
-             "Long",
-             strategy.long,
-             limit = level
+             id = "Long",
+             direction = strategy.long,
+             limit = lowerLevel
          )
 
-        usedLevel := level
-
-// ========================================
-// ショート
-// ========================================
-if shortSignal and strategy.position_size == 0
-
-    if na(usedLevel) or usedLevel != level
-
+    if canShort
         strategy.entry(
-             "Short",
-             strategy.short,
-             limit = level
+             id = "Short",
+             direction = strategy.short,
+             limit = upperLevel
          )
 
-        usedLevel := level
+if strategy.position_size > 0 and strategy.position_size[1] == 0
+    usedLevel := strategy.position_avg_price
 
-// ========================================
-// ロング決済
-// ========================================
+if strategy.position_size < 0 and strategy.position_size[1] == 0
+    usedLevel := strategy.position_avg_price
+
 if strategy.position_size > 0
-
     strategy.exit(
-         "Long Exit",
+         id = "Long Exit",
          from_entry = "Long",
-         limit = strategy.position_avg_price + tp,
-         stop  = strategy.position_avg_price - sl
+         limit = strategy.position_avg_price + tpValue,
+         stop  = strategy.position_avg_price - slValue
      )
 
-// ========================================
-// ショート決済
-// ========================================
 if strategy.position_size < 0
-
     strategy.exit(
-         "Short Exit",
+         id = "Short Exit",
          from_entry = "Short",
-         limit = strategy.position_avg_price - tp,
-         stop  = strategy.position_avg_price + sl
+         limit = strategy.position_avg_price - tpValue,
+         stop  = strategy.position_avg_price + slValue
+     )
+
+if showLines and barstate.islast
+    line.new(
+         x1 = bar_index,
+         y1 = upperLevel,
+         x2 = bar_index + 100,
+         y2 = upperLevel,
+         color = color.red,
+         width = 1,
+         style = line.style_solid
+     )
+
+    line.new(
+         x1 = bar_index,
+         y1 = lowerLevel,
+         x2 = bar_index + 100,
+         y2 = lowerLevel,
+         color = color.red,
+         width = 1,
+         style = line.style_solid
      )
