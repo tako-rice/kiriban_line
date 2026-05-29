@@ -1,0 +1,112 @@
+//@version=6
+strategy(
+     "KiriBan Limit Touch Strategy EMA200 Filter",
+     overlay = true,
+     pyramiding = 0,
+     initial_capital = 100000,
+     calc_on_every_tick = true,
+     process_orders_on_close = false
+)
+
+stepSize = input.float(1.0, "キリ番間隔")
+tpPips   = input.int(30, "利確 pips")
+slPips   = input.int(30, "損切 pips")
+
+emaLength = input.int(200, "EMA期間", minval = 1)
+
+showLines = input.bool(true, "キリ番表示")
+showEma   = input.bool(true, "200EMA表示")
+
+pipValue = input.float(0.01, "1 pip の価格幅", step = 0.001)
+
+tpValue = tpPips * pipValue
+slValue = slPips * pipValue
+
+ema200 = ta.ema(close, emaLength)
+
+emaUp   = ema200 > ema200[1]
+emaDown = ema200 < ema200[1]
+
+plot(
+     showEma ? ema200 : na,
+     title = "EMA200",
+     color = color.orange,
+     linewidth = 2
+)
+
+float upperLevel = math.ceil(close / stepSize) * stepSize
+float lowerLevel = math.floor(close / stepSize) * stepSize
+
+if upperLevel == lowerLevel
+    upperLevel := upperLevel + stepSize
+    lowerLevel := lowerLevel - stepSize
+
+var float usedLevel = na
+
+if not na(usedLevel)
+    if high >= usedLevel + stepSize or low <= usedLevel - stepSize
+        usedLevel := na
+
+bool canLong  = na(usedLevel) or usedLevel != lowerLevel
+bool canShort = na(usedLevel) or usedLevel != upperLevel
+
+strategy.cancel("Long")
+strategy.cancel("Short")
+
+if strategy.position_size == 0
+    if canLong and emaUp
+        strategy.entry(
+             id = "Long",
+             direction = strategy.long,
+             limit = lowerLevel
+         )
+
+    if canShort and emaDown
+        strategy.entry(
+             id = "Short",
+             direction = strategy.short,
+             limit = upperLevel
+         )
+
+if strategy.position_size > 0 and strategy.position_size[1] == 0
+    usedLevel := strategy.position_avg_price
+
+if strategy.position_size < 0 and strategy.position_size[1] == 0
+    usedLevel := strategy.position_avg_price
+
+if strategy.position_size > 0
+    strategy.exit(
+         id = "Long Exit",
+         from_entry = "Long",
+         limit = strategy.position_avg_price + tpValue,
+         stop  = strategy.position_avg_price - slValue
+     )
+
+if strategy.position_size < 0
+    strategy.exit(
+         id = "Short Exit",
+         from_entry = "Short",
+         limit = strategy.position_avg_price - tpValue,
+         stop  = strategy.position_avg_price + slValue
+     )
+
+if showLines and barstate.islast
+    line.new(
+         x1 = bar_index,
+         y1 = upperLevel,
+         x2 = bar_index + 100,
+         y2 = upperLevel,
+         color = color.red,
+         width = 1,
+         style = line.style_solid
+     )
+
+    line.new(
+         x1 = bar_index,
+         y1 = lowerLevel,
+         x2 = bar_index + 100,
+         y2 = lowerLevel,
+         color = color.red,
+         width = 1,
+         style = line.style_solid
+     )
