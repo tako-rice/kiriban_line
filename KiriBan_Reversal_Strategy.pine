@@ -1,104 +1,122 @@
 //@version=6
 strategy(
-     "KiriBan Reversal Strategy",
+     "KiriBan REAL FIX",
      overlay = true,
-     initial_capital = 100000,
      pyramiding = 0,
-     default_qty_type = strategy.percent_of_equity,
-     default_qty_value = 10
+     initial_capital = 100000
 )
 
-// =====================================================
+// ========================================
 // 設定
-// =====================================================
-stepSize = input.float(1.0, "キリ番間隔", step = 0.1)
+// ========================================
+stepSize = input.float(1.0, "キリ番間隔")
+tpPips   = input.int(30, "利確pips")
+slPips   = input.int(30, "損切pips")
 
-tpValue  = input.float(0.5, "利確幅")
-slValue  = input.float(0.5, "損切幅")
+// USDJPY想定
+pipValue = 0.01
 
-showLines = input.bool(true, "キリ番ライン表示")
+tp = tpPips * pipValue
+sl = slPips * pipValue
 
-// =====================================================
-// キリ番価格計算
-// =====================================================
-float currentLevel = math.round(close / stepSize) * stepSize
+// ========================================
+// キリ番計算
+// ========================================
+float level = math.round(close / stepSize) * stepSize
 
-float upperLevel = currentLevel
-float lowerLevel = currentLevel
+// ========================================
+// ライン表示
+// ========================================
+line.new(
+     bar_index,
+     level,
+     bar_index + 20,
+     level,
+     color = color.red,
+     width = 1
+)
 
-// =====================================================
-// キリ番ライン表示
-// =====================================================
-if showLines
+// ========================================
+// 一度使ったライン管理
+// ========================================
+var float usedLevel = na
 
-    line.new(
-         x1 = bar_index,
-         y1 = currentLevel,
-         x2 = bar_index + 20,
-         y2 = currentLevel,
-         color = color.gray,
-         width = 1,
-         style = line.style_solid
-     )
+// ========================================
+// ライン解放条件
+// ========================================
+if not na(usedLevel)
 
-// =====================================================
+    if close >= usedLevel + stepSize or close <= usedLevel - stepSize
+        usedLevel := na
+
+// ========================================
 // ロング条件
-// 上から下へ当たる
-// =====================================================
-bool longCondition =
-     low <= currentLevel and
-     open > currentLevel and
-     close > currentLevel
+// 上から下へタッチ
+// ========================================
+longSignal =
+     low <= level and
+     open > level and
+     close > level
 
-// =====================================================
+// ========================================
 // ショート条件
-// 下から上へ当たる
-// =====================================================
-bool shortCondition =
-     high >= currentLevel and
-     open < currentLevel and
-     close < currentLevel
+// 下から上へタッチ
+// ========================================
+shortSignal =
+     high >= level and
+     open < level and
+     close < level
 
-// =====================================================
-// ロングエントリー
-// =====================================================
-if longCondition and strategy.position_size == 0
+// ========================================
+// ロング
+// ========================================
+if longSignal and strategy.position_size == 0
 
-    strategy.entry(
-         id = "Long",
-         direction = strategy.long
-     )
+    if na(usedLevel) or usedLevel != level
 
-// =====================================================
-// ショートエントリー
-// =====================================================
-if shortCondition and strategy.position_size == 0
+        strategy.entry(
+             "Long",
+             strategy.long,
+             limit = level
+         )
 
-    strategy.entry(
-         id = "Short",
-         direction = strategy.short
-     )
+        usedLevel := level
 
-// =====================================================
+// ========================================
+// ショート
+// ========================================
+if shortSignal and strategy.position_size == 0
+
+    if na(usedLevel) or usedLevel != level
+
+        strategy.entry(
+             "Short",
+             strategy.short,
+             limit = level
+         )
+
+        usedLevel := level
+
+// ========================================
 // ロング決済
-// =====================================================
+// ========================================
 if strategy.position_size > 0
 
     strategy.exit(
          "Long Exit",
          from_entry = "Long",
-         limit = strategy.position_avg_price + tpValue,
-         stop  = strategy.position_avg_price - slValue
+         limit = strategy.position_avg_price + tp,
+         stop  = strategy.position_avg_price - sl
      )
 
-// =====================================================
+// ========================================
 // ショート決済
-// =====================================================
+// ========================================
 if strategy.position_size < 0
 
     strategy.exit(
          "Short Exit",
          from_entry = "Short",
-         limit = strategy.position_avg_price - tpValue,
-         stop  = strategy.position_avg_price + slValue
+         limit = strategy.position_avg_price - tp,
+         stop  = strategy.position_avg_price + sl
      )
