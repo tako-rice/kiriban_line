@@ -1,0 +1,364 @@
+//@version=6
+strategy(
+     "KiriBan Pinbar EMA200 SwingSL RR1.5 SL DEBUG LINE FIXED",
+     overlay = true,
+     pyramiding = 0,
+     initial_capital = 100000,
+     process_orders_on_close = true,
+     calc_on_order_fills = true,
+     max_labels_count = 500,
+     max_lines_count = 500
+)
+
+// ========================================
+// 設定
+// ========================================
+stepSize = input.float(1.0, "キリ番間隔")
+emaLength = input.int(200, "EMA期間", minval = 1)
+
+swingLeft  = input.int(6, "スイング左本数", minval = 1)
+swingRight = input.int(6, "スイング右本数", minval = 1)
+
+riskReward = input.float(1.5, "リスクリワード", step = 0.1)
+
+showLines = input.bool(true, "キリ番表示")
+showEma   = input.bool(true, "200EMA表示")
+showDebug = input.bool(true, "採用SL/TP表示")
+
+// ========================================
+// ロンドン・NY時間フィルター
+// ========================================
+londonSession =
+     not na(time(timeframe.period, "0800-1700", "Europe/London"))
+
+nySession =
+     not na(time(timeframe.period, "0930-1700", "America/New_York"))
+
+tradeSession = londonSession or nySession
+
+// ========================================
+// EMA200
+// ========================================
+ema200 = ta.ema(close, emaLength)
+
+emaUp   = ema200 > ema200[1]
+emaDown = ema200 < ema200[1]
+
+plot(showEma ? ema200 : na, "EMA200", color = color.orange, linewidth = 2)
+
+// ========================================
+// スイング高値・安値
+// 左6本・右6本を超えていない高値/安値
+// ========================================
+swingHigh = ta.pivothigh(high, swingLeft, swingRight)
+swingLow  = ta.pivotlow(low, swingLeft, swingRight)
+
+var float lastSwingHigh = na
+var float lastSwingLow = na
+var int lastSwingHighBar = na
+var int lastSwingLowBar = na
+
+if not na(swingHigh)
+    lastSwingHigh := swingHigh
+    lastSwingHighBar := bar_index - swingRight
+
+if not na(swingLow)
+    lastSwingLow := swingLow
+    lastSwingLowBar := bar_index - swingRight
+
+// ========================================
+// キリ番計算
+// ========================================
+float upperLevel = math.ceil(close / stepSize) * stepSize
+float lowerLevel = math.floor(close / stepSize) * stepSize
+
+if upperLevel == lowerLevel
+    upperLevel := upperLevel + stepSize
+    lowerLevel := lowerLevel - stepSize
+
+// ========================================
+// ローソク足構成
+// ========================================
+bodySize = math.abs(close - open)
+upperWick = high - math.max(open, close)
+lowerWick = math.min(open, close) - low
+
+validBody = bodySize > 0
+
+bullishPinbar =
+     validBody and
+     lowerWick >= bodySize * 2.0 and
+     upperWick <= bodySize
+
+bearishPinbar =
+     validBody and
+     upperWick >= bodySize * 2.0 and
+     lowerWick <= bodySize
+
+// ========================================
+// キリ番タッチ
+// ========================================
+touchLowerLevel = low <= lowerLevel
+touchUpperLevel = high >= upperLevel
+
+// ========================================
+// 同一キリ番連続防止
+// ========================================
+var float usedLevel = na
+
+if not na(usedLevel)
+    if high >= usedLevel + stepSize or low <= usedLevel - stepSize
+        usedLevel := na
+
+canLong = na(usedLevel) or usedLevel != lowerLevel
+canShort = na(usedLevel) or usedLevel != upperLevel
+
+// ========================================
+// エントリー条件
+// ========================================
+longCondition =
+     strategy.position_size == 0 and
+     tradeSession and
+     emaUp and
+     touchLowerLevel and
+     bullishPinbar and
+     canLong and
+     not na(lastSwingLow) and
+     not na(lastSwingLowBar) and
+     lastSwingLowBar < bar_index and
+     lastSwingLow < close
+
+shortCondition =
+     strategy.position_size == 0 and
+     tradeSession and
+     emaDown and
+     touchUpperLevel and
+     bearishPinbar and
+     canShort and
+     not na(lastSwingHigh) and
+     not na(lastSwingHighBar) and
+     lastSwingHighBar < bar_index and
+     lastSwingHigh > close
+
+// ========================================
+// 保存変数
+// ========================================
+var float pendingStop = na
+var int pendingStopBar = na
+var string pendingSide = ""
+
+var float activeStop = na
+var float activeTarget = na
+var int activeStopBar = na
+
+var line activeSLLine = na
+var line activeTPLine = na
+
+// ========================================
+// エントリー
+// ========================================
+if longCondition
+    pendingStop := lastSwingLow
+    pendingStopBar := lastSwingLowBar
+    pendingSide := "Long"
+
+    strategy.entry(
+         id = "Long",
+         direction = strategy.long
+    )
+
+    usedLevel := lowerLevel
+
+if shortCondition
+    pendingStop := lastSwingHigh
+    pendingStopBar := lastSwingHighBar
+    pendingSide := "Short"
+
+    strategy.entry(
+         id = "Short",
+         direction = strategy.short
+    )
+
+    usedLevel := upperLevel
+
+// ========================================
+// 約定後、実建値からRR計算
+// ========================================
+newLong =
+     strategy.position_size > 0 and
+     strategy.position_size[1] <= 0
+
+newShort =
+     strategy.position_size < 0 and
+     strategy.position_size[1] >= 0
+
+if newLong and pendingSide == "Long" and not na(pendingStop)
+    float entryPrice = strategy.position_avg_price
+    float risk = entryPrice - pendingStop
+
+    if risk > 0
+        activeStop := pendingStop
+        activeStopBar := pendingStopBar
+        activeTarget := entryPrice + risk * riskReward
+
+        if showDebug
+            if not na(activeSLLine)
+                line.delete(activeSLLine)
+
+            if not na(activeTPLine)
+                line.delete(activeTPLine)
+
+            activeSLLine := line.new(
+                 x1 = activeStopBar,
+                 y1 = activeStop,
+                 x2 = bar_index + 50,
+                 y2 = activeStop,
+                 color = color.red,
+                 width = 3,
+                 style = line.style_solid
+            )
+
+            activeTPLine := line.new(
+                 x1 = bar_index,
+                 y1 = activeTarget,
+                 x2 = bar_index + 50,
+                 y2 = activeTarget,
+                 color = color.green,
+                 width = 3,
+                 style = line.style_solid
+            )
+
+            label.new(
+                 x = activeStopBar,
+                 y = activeStop,
+                 text = "採用SL\nSwing Low\n" + str.tostring(activeStop),
+                 style = label.style_label_up,
+                 textcolor = color.white,
+                 color = color.new(color.red, 0),
+                 size = size.small
+            )
+
+            label.new(
+                 x = bar_index,
+                 y = activeTarget,
+                 text = "TP RR " + str.tostring(riskReward) + "\n" + str.tostring(activeTarget),
+                 style = label.style_label_down,
+                 textcolor = color.white,
+                 color = color.new(color.green, 0),
+                 size = size.small
+            )
+
+    pendingStop := na
+    pendingStopBar := na
+    pendingSide := ""
+
+if newShort and pendingSide == "Short" and not na(pendingStop)
+    float entryPrice = strategy.position_avg_price
+    float risk = pendingStop - entryPrice
+
+    if risk > 0
+        activeStop := pendingStop
+        activeStopBar := pendingStopBar
+        activeTarget := entryPrice - risk * riskReward
+
+        if showDebug
+            if not na(activeSLLine)
+                line.delete(activeSLLine)
+
+            if not na(activeTPLine)
+                line.delete(activeTPLine)
+
+            activeSLLine := line.new(
+                 x1 = activeStopBar,
+                 y1 = activeStop,
+                 x2 = bar_index + 50,
+                 y2 = activeStop,
+                 color = color.red,
+                 width = 3,
+                 style = line.style_solid
+            )
+
+            activeTPLine := line.new(
+                 x1 = bar_index,
+                 y1 = activeTarget,
+                 x2 = bar_index + 50,
+                 y2 = activeTarget,
+                 color = color.green,
+                 width = 3,
+                 style = line.style_solid
+            )
+
+            label.new(
+                 x = activeStopBar,
+                 y = activeStop,
+                 text = "採用SL\nSwing High\n" + str.tostring(activeStop),
+                 style = label.style_label_down,
+                 textcolor = color.white,
+                 color = color.new(color.red, 0),
+                 size = size.small
+            )
+
+            label.new(
+                 x = bar_index,
+                 y = activeTarget,
+                 text = "TP RR " + str.tostring(riskReward) + "\n" + str.tostring(activeTarget),
+                 style = label.style_label_up,
+                 textcolor = color.white,
+                 color = color.new(color.green, 0),
+                 size = size.small
+            )
+
+    pendingStop := na
+    pendingStopBar := na
+    pendingSide := ""
+
+// ========================================
+// 決済
+// ========================================
+if strategy.position_size > 0 and not na(activeStop) and not na(activeTarget)
+    strategy.exit(
+         id = "Long Exit",
+         from_entry = "Long",
+         stop = activeStop,
+         limit = activeTarget
+    )
+
+if strategy.position_size < 0 and not na(activeStop) and not na(activeTarget)
+    strategy.exit(
+         id = "Short Exit",
+         from_entry = "Short",
+         stop = activeStop,
+         limit = activeTarget
+    )
+
+// ========================================
+// ポジション終了後リセット
+// ========================================
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    activeStop := na
+    activeTarget := na
+    activeStopBar := na
+
+// ========================================
+// キリ番ライン表示
+// ========================================
+if showLines and barstate.islast
+    line.new(
+         x1 = bar_index,
+         y1 = upperLevel,
+         x2 = bar_index + 100,
+         y2 = upperLevel,
+         color = color.red,
+         width = 1,
+         style = line.style_solid
+    )
+
+    line.new(
+         x1 = bar_index,
+         y1 = lowerLevel,
+         x2 = bar_index + 100,
+         y2 = lowerLevel,
+         color = color.red,
+         width = 1,
+         style = line.style_solid
+    )
